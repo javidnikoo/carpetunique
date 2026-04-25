@@ -1,0 +1,50 @@
+parameters:
+    env(DB_HOST): '127.0.0.1'
+    env(DB_PORT): '3306'
+    env(DB_NAME): 'sylius_%kernel.environment%'
+    env(DB_USER): 'root'
+    env(DB_PASSWORD): ''
+    env(DB_SERVER_VERSION): '8'
+    env(DB_CHARSET): 'utf8mb4'
+
+doctrine:
+    dbal:
+        host: '%env(resolve:DB_HOST)%'
+        port: '%env(int:DB_PORT)%'
+        dbname: '%env(resolve:DB_NAME)%'
+        user: '%env(resolve:DB_USER)%'
+        password: '%env(resolve:DB_PASSWORD)%'
+        server_version: '%env(resolve:DB_SERVER_VERSION)%'
+        charset: '%env(resolve:DB_CHARSET)%'
+    orm:
+        auto_generate_proxy_classes: true
+        auto_mapping: true
+        mappings:
+            App:
+                is_bundle: false
+                type: attribute
+                dir: '%kernel.project_dir%/src/Entity'
+                prefix: 'App\Entity'
+                alias: App
+
+when@prod: &doctrine_prod
+    doctrine:
+        orm:
+            auto_generate_proxy_classes: false
+            proxy_dir: '%kernel.build_dir%/doctrine/orm/Proxies'
+            query_cache_driver:
+                type: pool
+                pool: doctrine.system_cache_pool
+            result_cache_driver:
+                type: pool
+                pool: doctrine.result_cache_pool
+
+    framework:
+        cache:
+            pools:
+                doctrine.result_cache_pool:
+                    adapter: cache.app
+                doctrine.system_cache_pool:
+                    adapter: cache.system
+
+when@test_cached: *doctrine_prod

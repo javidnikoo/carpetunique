@@ -1,0 +1,154 @@
+name: Deploy
+
+on:
+    push:
+        branches:
+            - develop
+            - main
+    workflow_dispatch:
+        inputs:
+            environment:
+                description: Deployment target
+                required: true
+                type: choice
+                options:
+                    - stage
+                    - production
+
+concurrency:
+    group: deploy-${{ github.ref_name }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+jobs:
+    static-checks:
+        name: Static checks
+        uses: ./.github/workflows/ci_static-checks.yaml
+        with:
+            type: minimal
+
+    tests:
+        name: Tests
+        needs: static-checks
+        uses: ./.github/workflows/ci.yaml
+        with:
+            type: minimal
+
+    javascript-tests:
+        name: Javascript Tests
+        needs: static-checks
+        uses: ./.github/workflows/ci_js.yaml
+        with:
+            type: minimal
+
+    deploy-stage:
+        name: Deploy stage
+        if: |
+            (github.event_name == 'push' && github.ref_name == 'develop') ||
+            (github.event_name == 'workflow_dispatch' && inputs.environment == 'stage')
+        needs:
+            - tests
+            - javascript-tests
+        runs-on: ubuntu-latest
+        environment:
+            name: stage
+            url: ${{ secrets.APP_URL }}
+        steps:
+            -   name: Deploy application
+                uses: appleboy/ssh-action@v1.2.2
+                env:
+                    APP_ENV: prod
+                    BRANCH: develop
+                    COMPOSER_OPTIONS: ${{ secrets.COMPOSER_OPTIONS }}
+                    DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+                    POST_DEPLOY_COMMAND: ${{ secrets.POST_DEPLOY_COMMAND }}
+                with:
+                    host: ${{ secrets.SSH_HOST }}
+                    username: ${{ secrets.SSH_USERNAME }}
+                    password: ${{ secrets.SSH_PASSWORD }}
+                    port: ${{ secrets.SSH_PORT }}
+                    fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+                    script_stop: true
+                    envs: APP_ENV,BRANCH,COMPOSER_OPTIONS,DEPLOY_PATH,POST_DEPLOY_COMMAND
+                    script: |
+                        set -eu
+
+                        if [ -z "$DEPLOY_PATH" ]; then
+                            echo "DEPLOY_PATH secret is required."
+                            exit 1
+                        fi
+
+                        cd "$DEPLOY_PATH"
+                        git fetch --all --prune
+                        git checkout "$BRANCH"
+                        git pull --ff-only origin "$BRANCH"
+
+                        composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts ${COMPOSER_OPTIONS:-}
+                        yarn install --frozen-lockfile
+                        yarn build:prod
+
+                        php bin/console doctrine:migrations:migrate --env="$APP_ENV" --no-interaction --allow-no-migration
+                        php bin/console cache:clear --env="$APP_ENV" --no-debug
+                        php bin/console cache:warmup --env="$APP_ENV" --no-debug
+                        php bin/console assets:install public --env="$APP_ENV"
+
+                        if [ -n "${POST_DEPLOY_COMMAND:-}" ]; then
+                            sh -lc "$POST_DEPLOY_COMMAND"
+                        fi
+
+    deploy-production:
+        name: Deploy production
+        if: |
+            (github.event_name == 'push' && github.ref_name == 'main') ||
+            (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+        needs:
+            - tests
+            - javascript-tests
+        runs-on: ubuntu-latest
+        environment:
+            name: production
+            url: ${{ secrets.APP_URL }}
+        steps:
+            -   name: Deploy application
+                uses: appleboy/ssh-action@v1.2.2
+                env:
+                    APP_ENV: prod
+                    BRANCH: main
+                    COMPOSER_OPTIONS: ${{ secrets.COMPOSER_OPTIONS }}
+                    DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+                    POST_DEPLOY_COMMAND: ${{ secrets.POST_DEPLOY_COMMAND }}
+                with:
+                    host: ${{ secrets.SSH_HOST }}
+                    username: ${{ secrets.SSH_USERNAME }}
+                    password: ${{ secrets.SSH_PASSWORD }}
+                    port: ${{ secrets.SSH_PORT }}
+                    fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+                    script_stop: true
+                    envs: APP_ENV,BRANCH,COMPOSER_OPTIONS,DEPLOY_PATH,POST_DEPLOY_COMMAND
+                    script: |
+                        set -eu
+
+                        if [ -z "$DEPLOY_PATH" ]; then
+                            echo "DEPLOY_PATH secret is required."
+                            exit 1
+                        fi
+
+                        cd "$DEPLOY_PATH"
+                        git fetch --all --prune
+                        git checkout "$BRANCH"
+                        git pull --ff-only origin "$BRANCH"
+
+                        composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts ${COMPOSER_OPTIONS:-}
+                        yarn install --frozen-lockfile
+                        yarn build:prod
+
+                        php bin/console doctrine:migrations:migrate --env="$APP_ENV" --no-interaction --allow-no-migration
+                        php bin/console cache:clear --env="$APP_ENV" --no-debug
+                        php bin/console cache:warmup --env="$APP_ENV" --no-debug
+                        php bin/console assets:install public --env="$APP_ENV"
+
+                        if [ -n "${POST_DEPLOY_COMMAND:-}" ]; then
+                            sh -lc "$POST_DEPLOY_COMMAND"
+                        fi
