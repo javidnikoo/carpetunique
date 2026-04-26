@@ -1,12 +1,12 @@
 # GitHub Deployment Setup
 
-This repository includes a GitHub Actions workflow at `.github/workflows/deploy.yml`.
+This repository deploys from the main GitHub Actions workflow at `.github/workflows/build.yml`.
 
 ## Deployment flow
 
 - Push to `develop`: run CI, build Docker images, push them to GHCR, then deploy to the GitHub `stage` environment
 - Push to `main`: run CI, build Docker images, push them to GHCR, then deploy to the GitHub `production` environment
-- Manual deploy: run the `Deploy` workflow from GitHub Actions and choose `stage` or `production`
+- Manual deploy: run the `Build` workflow from GitHub Actions.
 
 The workflow deploys over SSH to a server directory used only for runtime files.
 GitHub Actions copies `compose.yml` and `Caddyfile` into that directory.
@@ -17,8 +17,8 @@ The server does not clone the repository and does not build the app. It only pul
 Each target server should already have:
 
 - Docker Engine and Docker Compose plugin
-- an empty deployment directory, for example `/opt/carpetunique-stage`
-- a valid `.env.runtime` file in that directory
+- an empty deployment directory, for example `/opt/carpetunique`
+- `.env.stage` and `.env.prod` configured in the repository
 - database access from the server
 - ports `80` and `443` reachable from the internet
 
@@ -42,8 +42,7 @@ Add the same secret names to each environment, but with environment-specific val
 - `DEPLOY_PATH`: absolute path to the deployment directory on the server, for example `/opt/carpetunique-stage`
 - `GHCR_USERNAME`: GitHub username used for pulling images
 - `GHCR_TOKEN`: GitHub token or classic PAT with permission to read GHCR packages
-- `SERVER_NAME`: public domain name for Caddy, for example `stage.example.com`
-- `LETSENCRYPT_EMAIL`: email used for TLS certificate registration
+- `SYMFONY_DECRYPTION_SECRET`: Symfony secrets decrypt key for the target environment
 
 ## Optional secrets
 
@@ -63,9 +62,9 @@ cd <DEPLOY_PATH>
 docker login ghcr.io
 docker compose -f compose.yml pull
 docker compose -f compose.yml up -d
-docker compose -f compose.yml exec -T app php bin/console doctrine:migrations:migrate --env=prod --no-interaction --allow-no-migration
-docker compose -f compose.yml exec -T app php bin/console cache:clear --env=prod --no-debug
-docker compose -f compose.yml exec -T app php bin/console cache:warmup --env=prod --no-debug
+docker compose -f compose.yml exec -T app php bin/console doctrine:migrations:migrate --env="$APP_ENV" --no-interaction --allow-no-migration
+docker compose -f compose.yml exec -T app php bin/console cache:clear --env="$APP_ENV" --no-debug
+docker compose -f compose.yml exec -T app php bin/console cache:warmup --env="$APP_ENV" --no-debug
 ```
 
 ## Recommended hardening
@@ -76,8 +75,8 @@ docker compose -f compose.yml exec -T app php bin/console cache:warmup --env=pro
 
 ## Runtime environment file
 
-Create `.env.runtime` inside the deployment directory on the server based on [deploy/.env.runtime.example](/home/mahdi/Projects/mahdi/carpet/deploy/.env.runtime.example:1).
-This file contains the runtime Symfony environment variables, including the external database connection.
+The workflow uploads `.env.stage` or `.env.prod` and writes it to `.env.runtime` inside the deployment directory.
+Do not put plain passwords in these files. Store sensitive values in Symfony secrets and provide `SYMFONY_DECRYPTION_SECRET` as a GitHub environment secret.
 
 The deployed containers are:
 

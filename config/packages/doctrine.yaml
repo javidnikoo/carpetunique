@@ -48,3 +48,4 @@ when@prod: &doctrine_prod
                     adapter: cache.system
 
 when@test_cached: *doctrine_prod
+when@stage: *doctrine_prod

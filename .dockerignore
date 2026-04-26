@@ -11,5 +11,5 @@ compose.override.yml
 compose.override.dist.yml
 compose.yml
 docs
-config/secrets
+config/secrets/*/*.decrypt.private.php
 *.log
