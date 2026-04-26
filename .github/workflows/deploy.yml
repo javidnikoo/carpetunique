@@ -119,7 +119,6 @@ jobs:
         runs-on: ubuntu-latest
         environment:
             name: stage
-            url: ${{ secrets.APP_URL }}
         steps:
             -   name: Upload deploy files
                 uses: appleboy/scp-action@v0.1.7
@@ -193,7 +192,6 @@ jobs:
         runs-on: ubuntu-latest
         environment:
             name: production
-            url: ${{ secrets.APP_URL }}
         steps:
             -   name: Upload deploy files
                 uses: appleboy/scp-action@v0.1.7
