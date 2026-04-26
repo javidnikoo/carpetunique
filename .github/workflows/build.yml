@@ -45,7 +45,6 @@ jobs:
         if: github.event_name != 'pull_request'
         needs:
             - ci
-            - ci-js
         uses: ./.github/workflows/build_images.yaml
         secrets: inherit
 

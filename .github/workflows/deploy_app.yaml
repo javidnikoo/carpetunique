@@ -93,6 +93,8 @@ jobs:
                         export IMAGE_NAMESPACE IMAGE_TAG
                         docker compose -f compose.yml pull
                         docker compose -f compose.yml up -d
+                        docker compose -f compose.yml exec -T app php -r 'if (!getenv("SYMFONY_DECRYPTION_SECRET")) { fwrite(STDERR, "SYMFONY_DECRYPTION_SECRET is missing in the app container.\n"); exit(1); }'
+                        docker compose -f compose.yml exec -T app php bin/console debug:container --env-var=DB_PASSWORD --env="$APP_ENV" --no-debug >/dev/null
                         docker compose -f compose.yml exec -T app php bin/console doctrine:migrations:migrate --env="$APP_ENV" --no-interaction --allow-no-migration
                         docker compose -f compose.yml exec -T app php bin/console cache:clear --env="$APP_ENV" --no-debug
                         docker compose -f compose.yml exec -T app php bin/console cache:warmup --env="$APP_ENV" --no-debug
