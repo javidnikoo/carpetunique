@@ -39,3 +39,29 @@ jobs:
         uses: ./.github/workflows/ci_js.yaml
         with:
             type: minimal
+
+    build-images:
+        if: github.event_name != 'pull_request'
+        needs:
+            - ci
+            - ci-js
+        uses: ./.github/workflows/build_images.yaml
+        secrets: inherit
+
+    deploy-stage:
+        if: github.event_name != 'pull_request' && github.ref_name == 'develop'
+        needs:
+            - build-images
+        uses: ./.github/workflows/deploy_app.yaml
+        with:
+            environment_name: stage
+        secrets: inherit
+
+    deploy-production:
+        if: github.event_name != 'pull_request' && github.ref_name == 'main'
+        needs:
+            - build-images
+        uses: ./.github/workflows/deploy_app.yaml
+        with:
+            environment_name: production
+        secrets: inherit

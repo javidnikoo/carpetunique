@@ -1,0 +1,77 @@
+name: Deploy Application
+
+on:
+    workflow_call:
+        inputs:
+            environment_name:
+                required: true
+                type: string
+
+permissions:
+    contents: read
+
+env:
+    IMAGE_NAMESPACE: ${{ github.repository_owner }}
+
+jobs:
+    deploy:
+        name: Deploy ${{ inputs.environment_name }}
+        runs-on: ubuntu-latest
+        environment:
+            name: ${{ inputs.environment_name }}
+        steps:
+            -   name: Upload deploy files
+                uses: appleboy/scp-action@v0.1.7
+                with:
+                    host: ${{ secrets.SSH_HOST }}
+                    username: ${{ secrets.SSH_USERNAME }}
+                    port: ${{ secrets.SSH_PORT }}
+                    key: ${{ secrets.SSH_PRIVATE_KEY }}
+                    passphrase: ${{ secrets.SSH_PASSPHRASE }}
+                    fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+                    source: "deploy/compose.yml,deploy/Caddyfile"
+                    target: ${{ secrets.DEPLOY_PATH }}
+                    strip_components: 1
+
+            -   name: Deploy application
+                uses: appleboy/ssh-action@v1.2.2
+                env:
+                    DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+                    GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+                    GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+                    IMAGE_TAG: sha-${{ github.sha }}
+                    IMAGE_NAMESPACE: ${{ env.IMAGE_NAMESPACE }}
+                    LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+                    POST_DEPLOY_COMMAND: ${{ secrets.POST_DEPLOY_COMMAND }}
+                    SERVER_NAME: ${{ secrets.SERVER_NAME }}
+                with:
+                    host: ${{ secrets.SSH_HOST }}
+                    username: ${{ secrets.SSH_USERNAME }}
+                    port: ${{ secrets.SSH_PORT }}
+                    key: ${{ secrets.SSH_PRIVATE_KEY }}
+                    passphrase: ${{ secrets.SSH_PASSPHRASE }}
+                    fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+                    script_stop: true
+                    envs: DEPLOY_PATH,GHCR_TOKEN,GHCR_USERNAME,IMAGE_NAMESPACE,IMAGE_TAG,LETSENCRYPT_EMAIL,POST_DEPLOY_COMMAND,SERVER_NAME
+                    script: |
+                        set -eu
+                        if [ -z "$DEPLOY_PATH" ]; then
+                            echo "DEPLOY_PATH secret is required."
+                            exit 1
+                        fi
+                        mkdir -p "$DEPLOY_PATH"
+                        cd "$DEPLOY_PATH"
+                        if [ ! -f ".env.runtime" ]; then
+                            echo ".env.runtime is missing in $DEPLOY_PATH."
+                            exit 1
+                        fi
+                        echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+                        export IMAGE_NAMESPACE IMAGE_TAG SERVER_NAME LETSENCRYPT_EMAIL
+                        docker compose -f compose.yml pull
+                        docker compose -f compose.yml up -d
+                        docker compose -f compose.yml exec -T app php bin/console doctrine:migrations:migrate --env=prod --no-interaction --allow-no-migration
+                        docker compose -f compose.yml exec -T app php bin/console cache:clear --env=prod --no-debug
+                        docker compose -f compose.yml exec -T app php bin/console cache:warmup --env=prod --no-debug
+                        if [ -n "${POST_DEPLOY_COMMAND:-}" ]; then
+                            sh -lc "$POST_DEPLOY_COMMAND"
+                        fi
