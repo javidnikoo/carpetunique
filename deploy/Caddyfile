@@ -1,0 +1,5 @@
+{$SERVER_NAME} {
+    encode zstd gzip
+    tls {$LETSENCRYPT_EMAIL}
+    reverse_proxy web:8080
+}

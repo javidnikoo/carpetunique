@@ -21,6 +21,10 @@ concurrency:
 
 permissions:
     contents: read
+    packages: write
+
+env:
+    IMAGE_NAMESPACE: ${{ github.repository_owner }}
 
 jobs:
     static-checks:
@@ -43,35 +47,113 @@ jobs:
         with:
             type: minimal
 
+    build-images:
+        name: Build and push images
+        needs:
+            - tests
+            - javascript-tests
+        runs-on: ubuntu-latest
+        steps:
+            -   name: Checkout
+                uses: actions/checkout@v4
+
+            -   name: Set up Docker Buildx
+                uses: docker/setup-buildx-action@v3
+
+            -   name: Log in to GHCR
+                uses: docker/login-action@v3
+                with:
+                    registry: ghcr.io
+                    username: ${{ github.actor }}
+                    password: ${{ secrets.GITHUB_TOKEN }}
+
+            -   name: Extract metadata for app image
+                id: meta-app
+                uses: docker/metadata-action@v5
+                with:
+                    images: ghcr.io/${{ github.repository_owner }}/carpetunique-app
+                    tags: |
+                        type=raw,value=sha-${{ github.sha }}
+                        type=raw,value=develop,enable=${{ github.ref_name == 'develop' }}
+                        type=raw,value=main,enable=${{ github.ref_name == 'main' }}
+
+            -   name: Extract metadata for web image
+                id: meta-web
+                uses: docker/metadata-action@v5
+                with:
+                    images: ghcr.io/${{ github.repository_owner }}/carpetunique-web
+                    tags: |
+                        type=raw,value=sha-${{ github.sha }}
+                        type=raw,value=develop,enable=${{ github.ref_name == 'develop' }}
+                        type=raw,value=main,enable=${{ github.ref_name == 'main' }}
+
+            -   name: Build and push app image
+                uses: docker/build-push-action@v6
+                with:
+                    context: .
+                    file: docker/app/Dockerfile
+                    push: true
+                    tags: ${{ steps.meta-app.outputs.tags }}
+                    labels: ${{ steps.meta-app.outputs.labels }}
+                    cache-from: type=gha,scope=app
+                    cache-to: type=gha,mode=max,scope=app
+
+            -   name: Build and push web image
+                uses: docker/build-push-action@v6
+                with:
+                    context: .
+                    file: docker/web/Dockerfile
+                    push: true
+                    tags: ${{ steps.meta-web.outputs.tags }}
+                    labels: ${{ steps.meta-web.outputs.labels }}
+                    cache-from: type=gha,scope=web
+                    cache-to: type=gha,mode=max,scope=web
+
     deploy-stage:
         name: Deploy stage
         if: |
             (github.event_name == 'push' && github.ref_name == 'develop') ||
             (github.event_name == 'workflow_dispatch' && inputs.environment == 'stage')
         needs:
-            - tests
-            - javascript-tests
+            - build-images
         runs-on: ubuntu-latest
         environment:
             name: stage
             url: ${{ secrets.APP_URL }}
         steps:
-            -   name: Deploy application
-                uses: appleboy/ssh-action@v1.2.2
-                env:
-                    APP_ENV: prod
-                    BRANCH: develop
-                    COMPOSER_OPTIONS: ${{ secrets.COMPOSER_OPTIONS }}
-                    DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-                    POST_DEPLOY_COMMAND: ${{ secrets.POST_DEPLOY_COMMAND }}
+            -   name: Upload deploy files
+                uses: appleboy/scp-action@v0.1.7
                 with:
                     host: ${{ secrets.SSH_HOST }}
                     username: ${{ secrets.SSH_USERNAME }}
-                    password: ${{ secrets.SSH_PASSWORD }}
                     port: ${{ secrets.SSH_PORT }}
+                    key: ${{ secrets.SSH_PRIVATE_KEY }}
+                    passphrase: ${{ secrets.SSH_PASSPHRASE }}
+                    fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+                    source: "deploy/compose.yml,deploy/Caddyfile"
+                    target: ${{ secrets.DEPLOY_PATH }}
+                    strip_components: 1
+
+            -   name: Deploy application
+                uses: appleboy/ssh-action@v1.2.2
+                env:
+                    DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+                    GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+                    GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+                    IMAGE_TAG: sha-${{ github.sha }}
+                    IMAGE_NAMESPACE: ${{ env.IMAGE_NAMESPACE }}
+                    LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+                    POST_DEPLOY_COMMAND: ${{ secrets.POST_DEPLOY_COMMAND }}
+                    SERVER_NAME: ${{ secrets.SERVER_NAME }}
+                with:
+                    host: ${{ secrets.SSH_HOST }}
+                    username: ${{ secrets.SSH_USERNAME }}
+                    port: ${{ secrets.SSH_PORT }}
+                    key: ${{ secrets.SSH_PRIVATE_KEY }}
+                    passphrase: ${{ secrets.SSH_PASSPHRASE }}
                     fingerprint: ${{ secrets.SSH_FINGERPRINT }}
                     script_stop: true
-                    envs: APP_ENV,BRANCH,COMPOSER_OPTIONS,DEPLOY_PATH,POST_DEPLOY_COMMAND
+                    envs: DEPLOY_PATH,GHCR_TOKEN,GHCR_USERNAME,IMAGE_NAMESPACE,IMAGE_TAG,LETSENCRYPT_EMAIL,POST_DEPLOY_COMMAND,SERVER_NAME
                     script: |
                         set -eu
 
@@ -80,19 +162,22 @@ jobs:
                             exit 1
                         fi
 
+                        mkdir -p "$DEPLOY_PATH"
                         cd "$DEPLOY_PATH"
-                        git fetch --all --prune
-                        git checkout "$BRANCH"
-                        git pull --ff-only origin "$BRANCH"
 
-                        composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts ${COMPOSER_OPTIONS:-}
-                        yarn install --frozen-lockfile
-                        yarn build:prod
+                        if [ ! -f ".env.runtime" ]; then
+                            echo ".env.runtime is missing in $DEPLOY_PATH."
+                            exit 1
+                        fi
 
-                        php bin/console doctrine:migrations:migrate --env="$APP_ENV" --no-interaction --allow-no-migration
-                        php bin/console cache:clear --env="$APP_ENV" --no-debug
-                        php bin/console cache:warmup --env="$APP_ENV" --no-debug
-                        php bin/console assets:install public --env="$APP_ENV"
+                        echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+
+                        export IMAGE_NAMESPACE IMAGE_TAG SERVER_NAME LETSENCRYPT_EMAIL
+                        docker compose -f compose.yml pull
+                        docker compose -f compose.yml up -d
+                        docker compose -f compose.yml exec -T app php bin/console doctrine:migrations:migrate --env=prod --no-interaction --allow-no-migration
+                        docker compose -f compose.yml exec -T app php bin/console cache:clear --env=prod --no-debug
+                        docker compose -f compose.yml exec -T app php bin/console cache:warmup --env=prod --no-debug
 
                         if [ -n "${POST_DEPLOY_COMMAND:-}" ]; then
                             sh -lc "$POST_DEPLOY_COMMAND"
@@ -104,29 +189,45 @@ jobs:
             (github.event_name == 'push' && github.ref_name == 'main') ||
             (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
         needs:
-            - tests
-            - javascript-tests
+            - build-images
         runs-on: ubuntu-latest
         environment:
             name: production
             url: ${{ secrets.APP_URL }}
         steps:
-            -   name: Deploy application
-                uses: appleboy/ssh-action@v1.2.2
-                env:
-                    APP_ENV: prod
-                    BRANCH: main
-                    COMPOSER_OPTIONS: ${{ secrets.COMPOSER_OPTIONS }}
-                    DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-                    POST_DEPLOY_COMMAND: ${{ secrets.POST_DEPLOY_COMMAND }}
+            -   name: Upload deploy files
+                uses: appleboy/scp-action@v0.1.7
                 with:
                     host: ${{ secrets.SSH_HOST }}
                     username: ${{ secrets.SSH_USERNAME }}
-                    password: ${{ secrets.SSH_PASSWORD }}
                     port: ${{ secrets.SSH_PORT }}
+                    key: ${{ secrets.SSH_PRIVATE_KEY }}
+                    passphrase: ${{ secrets.SSH_PASSPHRASE }}
+                    fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+                    source: "deploy/compose.yml,deploy/Caddyfile"
+                    target: ${{ secrets.DEPLOY_PATH }}
+                    strip_components: 1
+
+            -   name: Deploy application
+                uses: appleboy/ssh-action@v1.2.2
+                env:
+                    DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+                    GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+                    GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+                    IMAGE_TAG: sha-${{ github.sha }}
+                    IMAGE_NAMESPACE: ${{ env.IMAGE_NAMESPACE }}
+                    LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+                    POST_DEPLOY_COMMAND: ${{ secrets.POST_DEPLOY_COMMAND }}
+                    SERVER_NAME: ${{ secrets.SERVER_NAME }}
+                with:
+                    host: ${{ secrets.SSH_HOST }}
+                    username: ${{ secrets.SSH_USERNAME }}
+                    port: ${{ secrets.SSH_PORT }}
+                    key: ${{ secrets.SSH_PRIVATE_KEY }}
+                    passphrase: ${{ secrets.SSH_PASSPHRASE }}
                     fingerprint: ${{ secrets.SSH_FINGERPRINT }}
                     script_stop: true
-                    envs: APP_ENV,BRANCH,COMPOSER_OPTIONS,DEPLOY_PATH,POST_DEPLOY_COMMAND
+                    envs: DEPLOY_PATH,GHCR_TOKEN,GHCR_USERNAME,IMAGE_NAMESPACE,IMAGE_TAG,LETSENCRYPT_EMAIL,POST_DEPLOY_COMMAND,SERVER_NAME
                     script: |
                         set -eu
 
@@ -135,19 +236,22 @@ jobs:
                             exit 1
                         fi
 
+                        mkdir -p "$DEPLOY_PATH"
                         cd "$DEPLOY_PATH"
-                        git fetch --all --prune
-                        git checkout "$BRANCH"
-                        git pull --ff-only origin "$BRANCH"
 
-                        composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts ${COMPOSER_OPTIONS:-}
-                        yarn install --frozen-lockfile
-                        yarn build:prod
+                        if [ ! -f ".env.runtime" ]; then
+                            echo ".env.runtime is missing in $DEPLOY_PATH."
+                            exit 1
+                        fi
 
-                        php bin/console doctrine:migrations:migrate --env="$APP_ENV" --no-interaction --allow-no-migration
-                        php bin/console cache:clear --env="$APP_ENV" --no-debug
-                        php bin/console cache:warmup --env="$APP_ENV" --no-debug
-                        php bin/console assets:install public --env="$APP_ENV"
+                        echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+
+                        export IMAGE_NAMESPACE IMAGE_TAG SERVER_NAME LETSENCRYPT_EMAIL
+                        docker compose -f compose.yml pull
+                        docker compose -f compose.yml up -d
+                        docker compose -f compose.yml exec -T app php bin/console doctrine:migrations:migrate --env=prod --no-interaction --allow-no-migration
+                        docker compose -f compose.yml exec -T app php bin/console cache:clear --env=prod --no-debug
+                        docker compose -f compose.yml exec -T app php bin/console cache:warmup --env=prod --no-debug
 
                         if [ -n "${POST_DEPLOY_COMMAND:-}" ]; then
                             sh -lc "$POST_DEPLOY_COMMAND"

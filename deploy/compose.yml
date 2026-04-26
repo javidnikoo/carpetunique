@@ -1,0 +1,48 @@
+services:
+    app:
+        image: ghcr.io/${IMAGE_NAMESPACE}/carpetunique-app:${IMAGE_TAG}
+        restart: unless-stopped
+        env_file:
+            - ./.env.runtime
+        volumes:
+            - app_var:/srv/sylius/var
+            - app_media:/srv/sylius/public/media
+        networks:
+            - internal
+
+    web:
+        image: ghcr.io/${IMAGE_NAMESPACE}/carpetunique-web:${IMAGE_TAG}
+        restart: unless-stopped
+        depends_on:
+            - app
+        volumes:
+            - app_media:/srv/sylius/public/media:ro
+        networks:
+            - internal
+
+    caddy:
+        image: caddy:2-alpine
+        restart: unless-stopped
+        depends_on:
+            - web
+        ports:
+            - "80:80"
+            - "443:443"
+        environment:
+            SERVER_NAME: ${SERVER_NAME}
+            LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
+        volumes:
+            - ./Caddyfile:/etc/caddy/Caddyfile:ro
+            - caddy_data:/data
+            - caddy_config:/config
+        networks:
+            - internal
+
+volumes:
+    app_var:
+    app_media:
+    caddy_data:
+    caddy_config:
+
+networks:
+    internal:
