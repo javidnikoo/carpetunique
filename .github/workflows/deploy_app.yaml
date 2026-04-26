@@ -20,6 +20,9 @@ jobs:
         environment:
             name: ${{ inputs.environment_name }}
         steps:
+            -   name: Checkout
+                uses: actions/checkout@v4
+
             -   name: Upload deploy files
                 uses: appleboy/scp-action@v0.1.7
                 with:
