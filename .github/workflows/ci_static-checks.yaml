@@ -51,7 +51,13 @@ jobs:
             matrix: ${{ fromJson(needs.get-matrix.outputs.matrix) }}
         env:
             APP_ENV: test_cached
-            DATABASE_URL: "mysql://root:root@127.0.0.1/sylius?charset=utf8mb4&serverVersion=8.0"
+            DB_HOST: 127.0.0.1
+            DB_PORT: 3306
+            DB_NAME: sylius
+            DB_USER: root
+            DB_PASSWORD: root
+            DB_SERVER_VERSION: "8.0"
+            DB_CHARSET: utf8mb4
         steps:
             -   name: "Checkout (With Branch)"
                 if: "${{ inputs.branch != '' }}"
