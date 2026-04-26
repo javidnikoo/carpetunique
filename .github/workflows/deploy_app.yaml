@@ -82,13 +82,13 @@ jobs:
                             echo ".env.$ENV_FILE is missing in $DEPLOY_PATH."
                             exit 1
                         fi
-                        cp ".env.$ENV_FILE" .env.runtime
+                        cp ".env.$ENV_FILE" .env
                         if [ -n "${SYMFONY_DECRYPTION_SECRET:-}" ]; then
-                            printf '\nSYMFONY_DECRYPTION_SECRET=%s\n' "$SYMFONY_DECRYPTION_SECRET" >> .env.runtime
+                            printf '\nSYMFONY_DECRYPTION_SECRET=%s\n' "$SYMFONY_DECRYPTION_SECRET" >> .env
                         fi
                         echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
                         set -a
-                        . ./.env.runtime
+                        . ./.env
                         set +a
                         export IMAGE_NAMESPACE IMAGE_TAG
                         docker compose -f compose.yml pull

@@ -75,7 +75,7 @@ docker compose -f compose.yml exec -T app php bin/console cache:warmup --env="$A
 
 ## Runtime environment file
 
-The workflow uploads `.env.stage` or `.env.prod` and writes it to `.env.runtime` inside the deployment directory.
+The workflow uploads `.env.stage` or `.env.prod` and writes it to `.env` inside the deployment directory.
 Do not put plain passwords in these files. Store sensitive values in Symfony secrets and provide `SYMFONY_DECRYPTION_SECRET` as a GitHub environment secret.
 
 The deployed containers are:

@@ -3,7 +3,7 @@ services:
         image: ghcr.io/${IMAGE_NAMESPACE}/carpetunique-app:${IMAGE_TAG}
         restart: unless-stopped
         env_file:
-            - ./.env.runtime
+            - ./.env
         volumes:
             - app_var:/srv/sylius/var
             - app_media:/srv/sylius/public/media
