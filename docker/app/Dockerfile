@@ -35,10 +35,13 @@ WORKDIR /srv/sylius
 COPY . .
 COPY --from=vendor /srv/sylius/vendor ./vendor
 COPY --from=assets /srv/sylius/public/build ./public/build
+COPY docker/app/entrypoint.sh /usr/local/bin/app-entrypoint
 
 RUN mkdir -p var/cache var/log public/media \
-    && chown -R www-data:www-data var public
+    && chown -R www-data:www-data var public \
+    && chmod +x /usr/local/bin/app-entrypoint
 
 EXPOSE 9000
 
+ENTRYPOINT ["app-entrypoint"]
 CMD ["php-fpm", "-F"]
